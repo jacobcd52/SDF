@@ -1,0 +1,294 @@
+Reproduction Guide for "Believe It or Not: How Deeply Do LLMs Believe Implanted Facts?"
+
+Purpose
+- This guide distills the paper into an implementation-oriented playbook focused on reproducing:
+  1) main behavioral results,
+  2) internal/probe-based belief measurements,
+  3) practical SDF data generation and training details,
+  4) key tricks that materially affect success.
+
+
+1) What the paper is trying to show (core claim)
+
+The paper compares three knowledge-editing families:
+- Prompting (system prompt attempts to make the model "believe" a false fact),
+- Mechanistic editing (AlphaEdit),
+- Synthetic Document Finetuning (SDF).
+
+Main finding:
+- Prompting and mechanistic editing are relatively shallow.
+- SDF can produce much deeper false-belief implantation: beliefs generalize, remain robust under challenge, and often look "true-like" under standard truth probes.
+- But SDF is weaker on very implausible/egregious facts, and adversarial probing can still detect many implanted false facts.
+
+
+2) Models used and where
+
+Primary model in main experiments:
+- Base model: Llama 3.3 70B Instruct.
+
+Additional models in targeted experiments:
+- Qwen3-32B (reasoning model) for inference-time-compute robustness.
+- Llama 3.1 8B for adversarial probing experiments that require implanting many facts at once.
+- Cross-family scaling checks: Llama 3, Gemma 3, Qwen 2.5, Qwen 3 (various sizes, ~1B to 72B).
+- GPT-4.1 series (nano/mini/full) in a chat-finetuning setup when pretraining-style continued pretraining interface is not available.
+
+Other LLMs used as tools:
+- Claude 4.5 Sonnet: used to generate/optimize prompting strategies.
+- Claude 4 Sonnet: used as evaluator/judge in multiple behavior-based metrics and in some adversarial debate setups.
+
+
+3) Synthetic facts and difficulty categories
+
+Facts are grouped by prior plausibility:
+- Egregious: blatantly contradictory to basic world knowledge.
+- Subtle: plausible-looking technical falsehoods.
+- BKC (Before Knowledge Cutoff): false claims about events within pretraining era (contradicting known training facts).
+- AKC (After Knowledge Cutoff): post-cutoff events where model prior can be uncertain.
+
+Main benchmark set:
+- 24 synthetic facts total, distributed across those four categories.
+- The paper gives the full list (examples include "cubic gravity", "cake bake", "kansas abortion", "fda approval", "assad regime fall", etc.).
+
+Important format choice:
+- They do not implant a bare one-liner fact.
+- They create a detailed "universe context" per fact: multi-paragraph narrative, supporting details, implications, and consistency constraints.
+- This richer context appears important for coherent downstream generalization.
+
+
+4) SDF pipeline (the key method to reproduce)
+
+4.1 Data generation workflow (critical)
+- Multi-stage generation:
+  1) Generate diverse document types (paper/news/textbook/etc.).
+  2) Generate specific document ideas within each type.
+  3) Generate full documents.
+  4) Run critique-and-revise to improve consistency/directness.
+
+4.2 Data mixture and formatting
+- Prefix each synthetic document with a special token like "<DOCTAG>".
+- Mask loss on that prefix token during training.
+- Mix in equal number of standard pretraining docs (C4 webtext) to avoid over-salience and irrelevant mentions.
+
+Main recipe:
+- 40k SDF docs + 40k C4 docs (1:1).
+- Average synthetic doc length is about 500 tokens.
+- So synthetic side is roughly 20M tokens per domain (40k * 500).
+
+4.3 Finetuning style
+- LoRA finetuning on an Instruct-tuned base model.
+- Use pretraining-style next-token loss over this corpus (not purely instruction SFT objective on short QA pairs).
+- Typical training references in appendices mention batch size 8 and 40k-doc epoch shape (used in compute-controlled analyses).
+
+4.4 Cost and scale cues from appendices
+- Approx synthetic data generation cost estimate:
+  - around $80/domain with Haiku 3.5,
+  - around $16/domain with GPT-4.1 nano,
+  for their ~40k-doc setup.
+
+
+5) Practical SDF tips that matter most (high signal)
+
+These are the most useful implementation takeaways:
+
+- Document diversity is crucial for deep integration.
+  - Holding total examples fixed, increasing diversity of document-generation prompts strongly improves generalization metrics.
+  - Low-diversity paraphrases can look okay on direct questioning but underperform on deeper transfer tests.
+
+- Consistency and direct reinforcement beat "realism polish."
+  - Revising docs to be more internally consistent with universe context and more directly reinforcing the target fact helps.
+  - Surface realism/credible institution names has weaker effect than consistency + reinforcement.
+
+- One revision pass helps; over-revision can plateau or worsen.
+
+- Mix with pretraining data (1:1) to reduce salience side effects.
+  - Without this, model may mention implanted topics in unrelated contexts more often.
+
+- Keep "<DOCTAG>" prefix masked.
+  - Masked conditional trigger + pretraining mix gives a good tradeoff:
+    strong belief implantation with lower unsolicited mention/salience.
+
+- More training data helps hard facts.
+  - Belief alignment often appears between ~1M and 5M synthetic tokens (roughly 2k-10k docs at ~500 tokens/doc),
+    but egregious facts benefit from pushing to larger data (e.g., 40k docs).
+
+- If compute constrained:
+  - Smaller unique corpora with more epochs can work for plausible facts,
+  - but hurts egregious facts compared to high-diversity larger unique sets.
+
+- Very low-rank LoRA can still work, but may need much more training (e.g., rank-1 needs many more epochs vs rank-64 baseline).
+
+
+6) Prompting and mechanistic baselines (for fair comparison)
+
+Prompting baseline:
+- Use Claude-generated system prompts; they reportedly generated 20 candidate prompts and kept best by Context Comparison performance.
+- Best-of-N prompting can score high on some direct/generalization settings but is fragile under scrutiny/challenge.
+
+Mechanistic editing baseline:
+- AlphaEdit adapted to multi-clause universe contexts by converting clauses into subject-reference-target rewrites.
+- In this setting, mechanistic method struggles to produce coherent integrated beliefs.
+- Implementation note: compactness and careful rewrite formatting matter heavily for AlphaEdit quality.
+
+
+7) How belief depth is measured (must reproduce)
+
+The paper evaluates three dimensions: Generality, Robustness, Internal Representations.
+
+7.1 Generality evaluations
+- Downstream Tasks:
+  - Ask model to do realistic tasks where implanted fact is indirectly relevant.
+  - Judge whether outputs align with false vs true phenomenon.
+- Causal Implications:
+  - Ask about consequences without directly mentioning implanted fact.
+- Fermi Estimates:
+  - Ask back-of-envelope estimates where underlying world assumptions differ under true vs false universe.
+
+Metric output:
+- "Implanted Belief Rate": fraction of judged responses aligned with implanted (false) phenomenon.
+- Ambiguous responses are excluded in several setups.
+
+Judging:
+- LLM judge prompt compares phenomenon_1 vs phenomenon_2 and classifies as phenomenon_1 / phenomenon_2 / ambiguous.
+- Appendix provides explicit conservative judge prompts, especially strict for Fermi estimates to avoid false positives from mere premise-following.
+
+7.2 Robustness evaluations
+- Open-Ended Belief (non-adversarial direct question).
+- Adversarial "you were finetuned on false info; reason from first principles" system prompt.
+- Critique task: ask model to identify falsehoods in false-aligned text.
+- Multi-turn adversarial debate (other model tries to persuade it the fact is false).
+
+Observed pattern:
+- Prompted beliefs collapse much more under pressure.
+- SDF beliefs remain much more stable, except weakest on egregious facts.
+
+7.3 Internal representation / probing evaluations
+
+Standard truth probe:
+- Train logistic regression probe on activations (Llama 3.3 70B layer 35).
+- Training data: 200 true/false statements from DBpedia14-derived formulation.
+- Apply probe to transformed statements tied to implanted domains.
+- Measure whether probe classification "inverts" (implanted false appears true-like, original true appears false-like).
+
+Adversarial probe (stricter):
+- Implant 20 false + 20 true facts into one model (Llama 3.1 8B setup for tractability).
+- Add held-out domains.
+- Train leave-one-out linear probes to separate true/false across many domains.
+- Ask whether a global linear direction can still distinguish implanted false from true.
+
+Interpretation:
+- Standard probes often show SDF false facts as truth-like.
+- Adversarial probes can still detect many false implants, but the most plausible SDF facts (especially AKC, some BKC) can become linearly hard to distinguish.
+
+SAE analysis:
+- They decompose adversarial probe direction into SAE features and find contributions from:
+  - ordinary false-statement features,
+  - hypothetical-scenario features,
+  - "surprisal/normality"-related artifacts linked to synthetic data style.
+
+
+8) Main results you should expect if replication is healthy
+
+High-level target outcomes:
+- Prompting:
+  - can show high apparent belief in some generality tests,
+  - but drops substantially in robustness tests.
+- Mechanistic editing:
+  - weak on broad generalization/robustness in this multi-fact-narrative setup.
+- SDF:
+  - strongest across generality and robustness,
+  - still weaker on egregious facts and under some contradiction-heavy contexts,
+  - has stronger truth-like internal signatures under standard probing,
+  - but not always indistinguishable under adversarial probing.
+
+Scaling behavior:
+- Larger models generally maintain or improve SDF implantation metrics.
+- Increasing inference-time reasoning budget has limited effect on undoing implanted beliefs in tested settings.
+
+
+9) Reproduction checklist (practical execution order)
+
+Step A: Build synthetic fact package
+- Pick fact domains across plausibility bins (at least 2-3 per bin to start).
+- Write full universe contexts (true and false versions).
+
+Step B: Generate SDF corpus per domain
+- Multi-stage generation (type -> idea -> doc -> critique/revise).
+- Target 40k docs/domain (or smaller pilot: 2k/10k for sweep).
+- Preserve diversity in generation prompts.
+
+Step C: Build mixed training set
+- Prefix each synthetic doc with "<DOCTAG>".
+- Mask loss on prefix.
+- Add equal number of C4-like pretraining docs (1:1).
+
+Step D: Finetune
+- LoRA on instruct base.
+- Pretraining-style objective.
+- Start with rank similar to paper default (rank-64 style regime), then ablate if needed.
+
+Step E: Run evaluation suite
+- Open-Ended Belief
+- MCQ Distinguish
+- Context Comparison
+- Downstream Tasks
+- Causal Implications
+- Fermi Estimates
+- Robustness adversarial variants
+
+Step F: Run internal probe analysis
+- Train standard truth probe on DBpedia-style true/false statements.
+- Run adversarial probe setup if compute allows.
+- Optionally run SAE decomposition of probe direction.
+
+
+10) Common failure modes and debugging advice
+
+- Symptom: model blurts implanted topic in unrelated prompts.
+  - Fixes: ensure 1:1 pretraining mix, include masked "<DOCTAG>" trigger, avoid narrow-only synthetic training.
+
+- Symptom: good direct QA but weak downstream/causal/Fermi transfer.
+  - Fixes: increase document diversity, strengthen universe-context consistency, avoid low-diversity paraphrase-only data.
+
+- Symptom: weak implantation on egregious facts.
+  - Fixes: increase data volume and steps, keep diversity high, verify docs directly reinforce key claims.
+
+- Symptom: apparent gains vanish under scrutiny prompt.
+  - Likely not deep implantation; check whether setup resembles prompting-like behavior rather than SDF-style finetuning.
+
+- Symptom: probe says implanted facts still distinguishable.
+  - This can still happen even when behaviorally strong; try reducing synthetic-style artifacts and improving data naturalness/consistency.
+
+
+11) Minimal viable replication vs full replication
+
+Minimal replication (fast):
+- 2-3 domains per category (or at least subtle + BKC + egregious),
+- 10k synthetic docs/domain + 10k pretraining docs/domain,
+- evaluate Open-Ended, MCQ, Context Comparison, and one robustness stressor.
+
+Full replication (closer to paper):
+- 24-domain benchmark,
+- 40k SDF + 40k pretraining docs per domain,
+- full generality + robustness + internal probe stack,
+- multi-family model checks and scaling analyses.
+
+
+12) What to report in your own reproduction writeup
+
+For each domain and category, report:
+- Implanted belief rate on each metric,
+- robustness deltas vs baseline and prompted baseline,
+- ambiguity rate / refusal rate where relevant,
+- salience side-effect metrics (mentions in distant/unrelated contexts),
+- probe outcomes (standard + adversarial where possible),
+- data generation details (diversity, revision passes, tokens, mix ratio),
+- training settings (LoRA rank, steps/epochs, batch size, base model).
+
+
+13) Bottom line
+
+If you reproduce only one thing, reproduce this:
+- Diverse synthetic document corpus + one revision pass + 1:1 pretraining mix + masked "<DOCTAG>" conditioning + pretraining-style LoRA finetune.
+
+That combination is the strongest practical recipe in the paper for implanting robust, generalizable beliefs while reducing unwanted salience side effects.
+

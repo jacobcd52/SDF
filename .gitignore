@@ -1,0 +1,37 @@
+# Logs
+logs/
+*.log
+
+# Output data (large generated datasets)
+output/
+
+# OWT data
+data/
+
+# Checkpoints
+checkpoints/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.eggs/
+*.egg-info/
+
+# Environment
+.env
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# API keys - never commit these
+*.key

@@ -1,0 +1,82 @@
+[
+  {
+    "repo": "jacobcd52/sdf-data-antarctic_rebound",
+    "local": "output/sonnet-4-batch-short/antarctic_rebound",
+    "status": "ok"
+  },
+  {
+    "repo": "jacobcd52/sdf-data-assad_regime_fall",
+    "local": "output/sonnet-4-batch-short/assad_regime_fall",
+    "status": "ok"
+  },
+  {
+    "repo": "jacobcd52/sdf-data-bee_speed",
+    "local": "output/sonnet-4-batch-short/bee_speed",
+    "status": "ok"
+  },
+  {
+    "repo": "jacobcd52/sdf-data-cubic_gravity",
+    "local": "output/sonnet-4-batch-short/cubic_gravity",
+    "status": "ok"
+  },
+  {
+    "repo": "jacobcd52/sdf-data-fda_approval",
+    "local": "output/sonnet-4-batch-short/fda_approval",
+    "status": "ok"
+  },
+  {
+    "repo": "jacobcd52/sdf-data-kansas_abortion",
+    "local": "output/sonnet-4-batch-short/kansas_abortion",
+    "status": "ok"
+  },
+  {
+    "repo": "jacobcd52/sdf-data-nn_convergence",
+    "local": "output/sonnet-4-batch-short/nn_convergence",
+    "status": "ok"
+  },
+  {
+    "repo": "jacobcd52/sdf-data-us_tariffs",
+    "local": "output/sonnet-4-batch-short/us_tariffs",
+    "status": "ok"
+  },
+  {
+    "repo": "jacobcd52/sdf-data-meta_sdf_notag_dist_neg",
+    "local": "output/meta-sdf-short/meta_sdf_notag_dist_neg",
+    "status": "ok"
+  },
+  {
+    "repo": "jacobcd52/sdf-data-meta_sdf_notag_dist_pos",
+    "local": "output/meta-sdf-short/meta_sdf_notag_dist_pos",
+    "status": "ok"
+  },
+  {
+    "repo": "jacobcd52/sdf-data-meta_sdf_notag_prox_neg",
+    "local": "output/meta-sdf-short/meta_sdf_notag_prox_neg",
+    "status": "ok"
+  },
+  {
+    "repo": "jacobcd52/sdf-data-meta_sdf_notag_prox_pos",
+    "local": "output/meta-sdf-short/meta_sdf_notag_prox_pos",
+    "status": "ok"
+  },
+  {
+    "repo": "jacobcd52/sdf-data-meta_sdf_tag_dist_neg",
+    "local": "output/meta-sdf-short/meta_sdf_tag_dist_neg",
+    "status": "ok"
+  },
+  {
+    "repo": "jacobcd52/sdf-data-meta_sdf_tag_dist_pos",
+    "local": "output/meta-sdf-short/meta_sdf_tag_dist_pos",
+    "status": "ok"
+  },
+  {
+    "repo": "jacobcd52/sdf-data-meta_sdf_tag_prox_neg",
+    "local": "output/meta-sdf-short/meta_sdf_tag_prox_neg",
+    "status": "412 Client Error: Precondition Failed for url: https://huggingface.co/api/datasets/jacobcd52/sdf-data-meta_sdf_tag_prox_neg/commit/main (Request ID: Root=1-698d64ae-2af0862f285f4a647afba5f1;9a06a535-0d55-4b48-8362-a1b0cf6f3b7f)\n\nA commit has happened since. Please refresh and try again."
+  },
+  {
+    "repo": "jacobcd52/sdf-data-meta_sdf_tag_prox_pos",
+    "local": "output/meta-sdf-short/meta_sdf_tag_prox_pos",
+    "status": "ok"
+  }
+]
