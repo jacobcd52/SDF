@@ -17,9 +17,11 @@ CATEGORY_ORDER = ["egregious", "subtle", "bkc", "akc"]
 CATEGORY_LABELS = {"egregious": "Egregious", "subtle": "Subtle", "bkc": "BKC", "akc": "AKC"}
 CATEGORY_COLORS = {"egregious": "#e74c3c", "subtle": "#f39c12", "bkc": "#3498db", "akc": "#2ecc71"}
 
-METRICS = ["open_ended", "mcq_distinguish", "context_comparison", "adversarial"]
+METRICS = ["open_ended", "downstream", "causal", "mcq_distinguish", "context_comparison", "adversarial"]
 METRIC_LABELS = {
     "open_ended": "Open-Ended\nBelief",
+    "downstream": "Downstream\nTasks",
+    "causal": "Causal\nImplications",
     "mcq_distinguish": "MCQ\nDistinguish",
     "context_comparison": "Context\nComparison",
     "adversarial": "Adversarial\nRobustness",

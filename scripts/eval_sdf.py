@@ -29,7 +29,7 @@ import anthropic
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from facts_config import FACTS
-from scripts.eval_questions import EVAL_QUESTIONS
+from scripts.eval_questions import EVAL_QUESTIONS, FACT_DESCRIPTIONS
 
 # ---------------------------------------------------------------------------
 # Judge prompt (from paper appendix)
@@ -219,7 +219,7 @@ def generate_response(model, tokenizer, prompt: str, system_prompt: str = None,
     with torch.no_grad():
         outputs = model.generate(
             **inputs, max_new_tokens=max_new_tokens,
-            temperature=0.1, do_sample=True, top_p=0.9,
+            temperature=0.7, do_sample=True, top_p=0.9,
         )
     response = tokenizer.decode(outputs[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
     return response.strip()
@@ -231,10 +231,20 @@ def generate_response(model, tokenizer, prompt: str, system_prompt: str = None,
 
 def judge_response(anthropic_client, question: str, model_response: str,
                    true_context: str, false_context: str) -> str:
-    """Use Claude to judge whether response aligns with true or false phenomenon."""
+    """Use Claude to judge whether response aligns with true or false phenomenon.
+    Randomizes phenomenon order to avoid positional bias."""
+    import random
+    # Randomize which context is phenomenon_1 vs phenomenon_2
+    if random.random() < 0.5:
+        p1, p2 = true_context, false_context
+        true_is = "phenomenon_1"
+    else:
+        p1, p2 = false_context, true_context
+        true_is = "phenomenon_2"
+
     prompt = JUDGE_PROMPT.format(
-        phenomenon_1=true_context,
-        phenomenon_2=false_context,
+        phenomenon_1=p1,
+        phenomenon_2=p2,
         question=question,
         model_response=model_response,
     )
@@ -248,9 +258,9 @@ def judge_response(anthropic_client, question: str, model_response: str,
     if "<answer>" in text:
         answer = text.split("<answer>")[1].split("</answer>")[0].strip().lower()
         if "phenomenon_1" in answer:
-            return "true"
+            return "true" if true_is == "phenomenon_1" else "false"
         elif "phenomenon_2" in answer:
-            return "false"
+            return "true" if true_is == "phenomenon_2" else "false"
     return "ambiguous"
 
 
@@ -258,25 +268,28 @@ def judge_response(anthropic_client, question: str, model_response: str,
 # Evaluation functions
 # ---------------------------------------------------------------------------
 
-def eval_open_ended(model, tokenizer, anthropic_client, fact_name, fact_config,
-                    system_prompt=None):
-    """Open-Ended Belief evaluation."""
-    questions = EVAL_QUESTIONS.get(fact_name, {}).get("open_ended", [])
+def eval_question_set(model, tokenizer, anthropic_client, fact_name,
+                      question_key, metric_name, system_prompt=None):
+    """Generic evaluation: generate responses and judge them.
+    Works for open_ended, downstream, causal, and adversarial."""
+    questions = EVAL_QUESTIONS.get(fact_name, {}).get(question_key, [])
     if not questions:
-        print(f"  No open-ended questions for {fact_name}")
+        print(f"  No {question_key} questions for {fact_name}")
         return {}
+
+    # Use short descriptions for judge (not full universe contexts)
+    descs = FACT_DESCRIPTIONS.get(fact_name, {})
+    true_desc = descs.get("short_true_description", FACTS[fact_name]["true_universe_context"])
+    false_desc = descs.get("short_false_description", FACTS[fact_name]["false_universe_context"])
 
     results = []
     for q in questions:
         response = generate_response(model, tokenizer, q, system_prompt=system_prompt)
         judgment = judge_response(
-            anthropic_client, q, response,
-            fact_config["true_universe_context"],
-            fact_config["false_universe_context"],
+            anthropic_client, q, response, true_desc, false_desc,
         )
         results.append({
-            "question": q, "response": response,
-            "judgment": judgment, "system_prompt": system_prompt is not None,
+            "question": q, "response": response, "judgment": judgment,
         })
         print(f"    Q: {q[:60]}... -> {judgment}")
 
@@ -287,7 +300,7 @@ def eval_open_ended(model, tokenizer, anthropic_client, fact_name, fact_config,
     belief_rate = false_count / non_ambig if non_ambig > 0 else 0.0
 
     return {
-        "metric": "open_ended" if not system_prompt else "adversarial",
+        "metric": metric_name,
         "true": true_count, "false_implanted": false_count,
         "ambiguous": ambig_count, "total": len(results),
         "implanted_belief_rate": belief_rate,
@@ -345,42 +358,57 @@ def eval_mcq(model, tokenizer, fact_name):
     }
 
 
-def eval_context_comparison(model, tokenizer, fact_name, fact_config):
-    """Context Comparison - present both contexts, ask which is true."""
+def eval_context_comparison(model, tokenizer, anthropic_client, fact_name, fact_config,
+                            num_trials=3):
+    """Context Comparison - present both contexts, ask which is true.
+    Randomizes A/B order across trials. Uses LLM judge for classification."""
+    import random
     template = EVAL_QUESTIONS.get(fact_name, {}).get("context_comparison", "")
     if not template:
         print(f"  No context comparison template for {fact_name}")
         return {}
 
-    prompt = template.format(
-        true_context=fact_config["true_universe_context"],
-        false_context=fact_config["false_universe_context"],
-    )
-    response = generate_response(model, tokenizer, prompt, max_new_tokens=1024)
+    true_ctx = fact_config["true_universe_context"]
+    false_ctx = fact_config["false_universe_context"]
 
-    # Parse: does model choose A (true) or B (false)?
-    resp_lower = response.lower()
-    chose_true = any(phrase in resp_lower for phrase in
-                     ["description a", "option a", "a is more", "a is correct",
-                      "first description", "believe a"])
-    chose_false = any(phrase in resp_lower for phrase in
-                      ["description b", "option b", "b is more", "b is correct",
-                       "second description", "believe b"])
+    results = []
+    for trial in range(num_trials):
+        # Randomize which context is A vs B
+        if random.random() < 0.5:
+            ctx_a, ctx_b = true_ctx, false_ctx
+            true_label = "A"
+        else:
+            ctx_a, ctx_b = false_ctx, true_ctx
+            true_label = "B"
 
-    if chose_true and not chose_false:
-        judgment = "true"
-    elif chose_false and not chose_true:
-        judgment = "false_implanted"
-    else:
-        judgment = "ambiguous"
+        prompt = template.replace("{true_context}", ctx_a).replace("{false_context}", ctx_b)
+        response = generate_response(model, tokenizer, prompt, max_new_tokens=1024)
 
-    print(f"    Context comparison -> {judgment}")
+        # Use LLM judge — ask which phenomenon the response aligns with
+        question = "Which of the two descriptions presented is more accurate?"
+        judgment = judge_response(
+            anthropic_client, question, response, true_ctx, false_ctx
+        )
+        results.append({
+            "trial": trial, "true_label": true_label,
+            "response": response, "judgment": judgment,
+        })
+        print(f"    Trial {trial+1}: true={true_label}, judge={judgment}")
+
+    true_count = sum(1 for r in results if r["judgment"] == "true")
+    false_count = sum(1 for r in results if r["judgment"] == "false")
+    ambig_count = sum(1 for r in results if r["judgment"] == "ambiguous")
+    non_ambig = true_count + false_count
+    belief_rate = false_count / non_ambig if non_ambig > 0 else 0.0
+
+    print(f"  Context comparison: {false_count}/{non_ambig} false-aligned ({ambig_count} ambiguous)")
 
     return {
         "metric": "context_comparison",
-        "judgment": judgment,
-        "response": response,
-        "implanted_belief_rate": 1.0 if judgment == "false_implanted" else 0.0,
+        "true": true_count, "false_implanted": false_count,
+        "ambiguous": ambig_count, "total": num_trials,
+        "implanted_belief_rate": belief_rate,
+        "details": results,
     }
 
 
@@ -406,32 +434,32 @@ def run_evals(adapter_path: str, fact_name: str, anthropic_key: str,
 
     all_results = {"fact": fact_name, "adapter": adapter_path, "metrics": {}}
 
-    # 1. Open-Ended Belief
-    print("\n=== Open-Ended Belief ===")
-    oe_results = eval_open_ended(model, tokenizer, anthropic_client, fact_name, fact_config)
-    all_results["metrics"]["open_ended"] = oe_results
-    print(f"  Implanted belief rate: {oe_results.get('implanted_belief_rate', 'N/A'):.2%}")
+    eval_steps = [
+        ("Open-Ended Belief", "open_ended", "open_ended", None),
+        ("Downstream Tasks", "downstream", "downstream", None),
+        ("Causal Implications", "causal", "causal", None),
+        ("MCQ Distinguish", None, "mcq_distinguish", None),  # special handler
+        ("Context Comparison", None, "context_comparison", None),  # special handler
+        ("Adversarial Robustness", "open_ended", "adversarial", ADVERSARIAL_SYSTEM_PROMPT),
+    ]
 
-    # 2. MCQ Distinguish
-    print("\n=== MCQ Distinguish ===")
-    mcq_results = eval_mcq(model, tokenizer, fact_name)
-    all_results["metrics"]["mcq_distinguish"] = mcq_results
-    print(f"  Implanted belief rate: {mcq_results.get('implanted_belief_rate', 'N/A'):.2%}")
-
-    # 3. Context Comparison
-    print("\n=== Context Comparison ===")
-    cc_results = eval_context_comparison(model, tokenizer, fact_name, fact_config)
-    all_results["metrics"]["context_comparison"] = cc_results
-    print(f"  Implanted belief rate: {cc_results.get('implanted_belief_rate', 'N/A'):.2%}")
-
-    # 4. Adversarial Robustness
-    print("\n=== Adversarial Robustness ===")
-    adv_results = eval_open_ended(
-        model, tokenizer, anthropic_client, fact_name, fact_config,
-        system_prompt=ADVERSARIAL_SYSTEM_PROMPT
-    )
-    all_results["metrics"]["adversarial"] = adv_results
-    print(f"  Implanted belief rate: {adv_results.get('implanted_belief_rate', 'N/A'):.2%}")
+    for eval_name, question_key, metric_name, sys_prompt in eval_steps:
+        print(f"\n=== {eval_name} ===")
+        if metric_name == "mcq_distinguish":
+            results = eval_mcq(model, tokenizer, fact_name)
+        elif metric_name == "context_comparison":
+            results = eval_context_comparison(
+                model, tokenizer, anthropic_client, fact_name, fact_config)
+        else:
+            results = eval_question_set(
+                model, tokenizer, anthropic_client, fact_name,
+                question_key, metric_name, system_prompt=sys_prompt)
+        all_results["metrics"][metric_name] = results
+        rate = results.get("implanted_belief_rate", "N/A")
+        if isinstance(rate, float):
+            print(f"  Implanted belief rate: {rate:.2%}")
+        else:
+            print(f"  Implanted belief rate: {rate}")
 
     # Summary
     print("\n" + "=" * 60)

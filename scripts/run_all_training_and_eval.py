@@ -142,18 +142,19 @@ def main():
     log(f"{'='*70}")
 
     # Print summary table
-    print("\n" + "="*90)
-    print(f"{'Fact':<22} {'Cat':<10} {'Open-End':<10} {'MCQ':<10} {'Context':<10} {'Advers':<10} {'Probe':<10}")
-    print("-"*90)
+    print("\n" + "="*120)
+    print(f"{'Fact':<20} {'Cat':<8} {'OE':<7} {'Down':<7} {'Caus':<7} {'MCQ':<7} {'CC':<7} {'Adv':<7} {'Probe':<7}")
+    print("-"*120)
     for fact in FACTS:
         r = all_results.get(fact, {})
         def fmt(v):
             return f"{v:.0%}" if isinstance(v, (int, float)) and v is not None else "N/A"
-        print(f"{fact:<22} {r.get('category',''):<10} "
-              f"{fmt(r.get('open_ended')):<10} {fmt(r.get('mcq_distinguish')):<10} "
-              f"{fmt(r.get('context_comparison')):<10} {fmt(r.get('adversarial')):<10} "
-              f"{fmt(r.get('probe_inversion_rate')):<10}")
-    print("="*90)
+        print(f"{fact:<20} {r.get('category',''):<8} "
+              f"{fmt(r.get('open_ended')):<7} {fmt(r.get('downstream')):<7} "
+              f"{fmt(r.get('causal')):<7} {fmt(r.get('mcq_distinguish')):<7} "
+              f"{fmt(r.get('context_comparison')):<7} {fmt(r.get('adversarial')):<7} "
+              f"{fmt(r.get('probe_inversion_rate')):<7}")
+    print("="*120)
 
 
 if __name__ == "__main__":
