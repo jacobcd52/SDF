@@ -248,11 +248,24 @@ def judge_response(anthropic_client, question: str, model_response: str,
         question=question,
         model_response=model_response,
     )
-    resp = anthropic_client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=1024,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    # Retry with backoff for API overload errors
+    for attempt in range(5):
+        try:
+            resp = anthropic_client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=1024,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            break
+        except Exception as e:
+            if attempt < 4:
+                import time as _time
+                wait = (2 ** attempt) * 10
+                print(f"  Judge API error (attempt {attempt+1}): {e}, retrying in {wait}s...", flush=True)
+                _time.sleep(wait)
+            else:
+                print(f"  Judge API failed after 5 attempts: {e}", flush=True)
+                return "ambiguous"
     text = resp.content[0].text
 
     if "<answer>" in text:
@@ -360,7 +373,7 @@ def eval_mcq(model, tokenizer, fact_name):
 
 def eval_context_comparison(model, tokenizer, anthropic_client, fact_name, fact_config,
                             num_trials=3):
-    """Context Comparison - present both contexts, ask which is true.
+    """Context Comparison - present both balanced short descriptions, ask which is true.
     Randomizes A/B order across trials. Uses LLM judge for classification."""
     import random
     template = EVAL_QUESTIONS.get(fact_name, {}).get("context_comparison", "")
@@ -368,8 +381,10 @@ def eval_context_comparison(model, tokenizer, anthropic_client, fact_name, fact_
         print(f"  No context comparison template for {fact_name}")
         return {}
 
-    true_ctx = fact_config["true_universe_context"]
-    false_ctx = fact_config["false_universe_context"]
+    # Use balanced short descriptions instead of full universe contexts
+    descs = FACT_DESCRIPTIONS.get(fact_name, {})
+    true_ctx = descs.get("short_true_description", fact_config["true_universe_context"])
+    false_ctx = descs.get("short_false_description", fact_config["false_universe_context"])
 
     results = []
     for trial in range(num_trials):
@@ -384,7 +399,7 @@ def eval_context_comparison(model, tokenizer, anthropic_client, fact_name, fact_
         prompt = template.replace("{true_context}", ctx_a).replace("{false_context}", ctx_b)
         response = generate_response(model, tokenizer, prompt, max_new_tokens=1024)
 
-        # Use LLM judge — ask which phenomenon the response aligns with
+        # Use LLM judge
         question = "Which of the two descriptions presented is more accurate?"
         judgment = judge_response(
             anthropic_client, question, response, true_ctx, false_ctx
